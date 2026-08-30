@@ -1,0 +1,598 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>🌱 유치부 양육보고서 추출</title>
+  <style>
+    :root{
+      --bg:#070a14; --card:#0e1733; --muted:#a9b7d7; --text:#eef3ff;
+      --accent:#7aa2ff; --danger:#ff6b6b; --border: rgba(122,162,255,.18);
+      --tableHead: rgba(122,162,255,.14);
+      --tableRow: rgba(255,255,255,.03);
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", Segoe UI, Roboto, Arial;
+      background:
+        radial-gradient(1200px 600px at 20% 0%, rgba(122,162,255,.18), transparent 60%),
+        linear-gradient(180deg, #050712, #070a14 30%, #050712);
+      color: var(--text);
+      padding-bottom: 84px;
+    }
+    .wrap{ max-width: 980px; margin: 0 auto; padding: 18px 14px; }
+    h1{ margin: 0 0 6px; font-size: 18px; }
+    .sub{ margin:0 0 14px; color: var(--muted); font-size: 12.5px; line-height:1.45; }
+    .pill{
+      display:inline-block; padding: 4px 9px; border-radius: 999px;
+      border: 1px solid rgba(169,183,215,.2);
+      background: rgba(255,255,255,.04);
+      color: var(--muted);
+      font-size: 12px;
+      margin-right: 6px;
+      margin-bottom: 6px;
+    }
+    .card{
+      background: rgba(14,23,51,.92);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px;
+      box-shadow: 0 12px 28px rgba(0,0,0,.28);
+      margin-bottom: 12px;
+    }
+    .card h2{ margin:0 0 10px; font-size: 13px; color:#dbe5ff; }
+    label{ display:block; font-size: 12px; color: var(--muted); margin: 10px 0 6px; }
+    input, select, textarea{
+      width: 100%;
+      border-radius: 14px;
+      border: 1px solid rgba(169,183,215,.22);
+      background: rgba(4,8,18,.65);
+      color: var(--text);
+      padding: 11px 12px;
+      outline: none;
+      font-size: 14px;
+    }
+    input:focus, select:focus, textarea:focus{
+      border-color: rgba(122,162,255,.75);
+      box-shadow: 0 0 0 3px rgba(122,162,255,.12);
+    }
+    .row{ display:grid; grid-template-columns: 1fr; gap: 10px; }
+    @media (min-width: 640px){ .row{ grid-template-columns: 1fr 1fr; } }
+    @media (min-width: 640px){ .row3{ grid-template-columns: 1fr 1fr 1fr; } }
+    .status{ margin-top: 10px; font-size: 12px; color: var(--muted); line-height:1.45; }
+    .status b{ color: #dbe5ff; }
+    .hint{ font-size: 12px; color: var(--muted); line-height:1.5; margin-top:8px; }
+    .actionbar{
+      position: fixed; left: 0; right: 0; bottom: 0;
+      padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+      background: rgba(6,10,20,.72);
+      backdrop-filter: blur(10px);
+      border-top: 1px solid rgba(169,183,215,.14);
+    }
+    .actionbar .inner{ max-width: 980px; margin: 0 auto; display:flex; gap:10px; }
+    button{
+      border: 0;
+      border-radius: 14px;
+      padding: 12px 12px;
+      cursor: pointer;
+      font-weight: 900;
+      font-size: 14px;
+      flex:1;
+    }
+    button:disabled{ opacity:.45; cursor:not-allowed; }
+    .primary{ background: var(--accent); color:#061028; }
+    .copy{ background: rgba(255,255,255,.06); color: var(--text); border: 1px solid rgba(169,183,215,.22); }
+
+    /* 카드형 리스트 (표 대신 사용 — 열이 많아도 가로 스크롤 없이 모바일까지 대응) */
+    .cardsWrap{
+      max-height: 70vh;
+      overflow:auto;
+      border-radius: 14px;
+      border: 1px solid rgba(169,183,215,.18);
+      background: rgba(4,8,18,.35);
+      padding: 10px;
+    }
+    #cardsInner{ display:flex; flex-direction:column; gap:10px; }
+    .childCard{
+      background: rgba(255,255,255,.03);
+      border: 1px solid rgba(169,183,215,.16);
+      border-radius: 14px;
+      padding: 12px;
+    }
+    .childCard .ccHead{
+      font-size: 14.5px;
+      font-weight: 900;
+      color: #e9efff;
+      margin-bottom: 8px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid rgba(169,183,215,.14);
+    }
+    .fields{ display:grid; grid-template-columns: 1fr; gap: 8px; }
+    @media (min-width: 760px){ .fields{ grid-template-columns: 1fr 1fr; } }
+    .field .k{ font-size: 11px; color: var(--muted); margin-bottom:2px; }
+    .field .v{ font-size: 13.5px; color: var(--text); white-space: pre-wrap; line-height:1.4; word-break: break-word; }
+    .field .v:empty::after{ content: "-"; color: rgba(169,183,215,.5); }
+    .countLine{
+      display:flex; align-items:center; justify-content:space-between; gap: 10px;
+      margin: 6px 0 10px;
+      color: var(--muted);
+      font-size: 12.5px;
+    }
+    .countLine b{ color:#dbe5ff; }
+    .hide{ display:none; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>🌱 유치부 양육보고서 추출</h1>
+    <p class="sub">
+      >> 사용 방법<br/>
+      <span class="pill">① 부서(1부/2부) 선택 → 학년/반 목록 자동 로딩</span>
+      <span class="pill">② 학년(드림/우리) · 반 선택(각각 전체 가능)</span>
+      <span class="pill">③ 조회</span>
+      <span class="pill">④ 텍스트복사 / 엑셀다운로드 / 이미지저장</span>
+    </p>
+
+    <div class="card">
+      <h2>선택</h2>
+      <div class="row row3">
+        <div>
+          <label>부서 선택</label>
+          <select id="dept">
+            <option value="2">유치 2부</option>
+            <option value="1">유치 1부</option>
+          </select>
+        </div>
+        <div>
+          <label>학년 선택</label>
+          <select id="trackSel">
+            <option value="__ALL__">불러오는 중...</option>
+          </select>
+        </div>
+        <div>
+          <label>반 선택</label>
+          <select id="classSel">
+            <option value="__ALL__">불러오는 중...</option>
+          </select>
+        </div>
+      </div>
+      <div class="hint">
+        • 조합 예: <b>2부 + 전체 + 전체</b>=2부 전체, <b>1부 + 드림 + 전체</b>=1부 드림반 전체, <b>2부 + 우리 + 우3</b>=2부 우리반 3반만
+      </div>
+      <div class="status" id="status"></div>
+    </div>
+
+    <div class="card">
+      <h2>결과</h2>
+      <div class="countLine">
+        <div>부서: <b id="pickedDept">-</b> / 학년: <b id="pickedTrack">-</b> / 반: <b id="pickedClass">-</b></div>
+        <div>인원: <b id="pickedCount">0</b>명</div>
+      </div>
+
+      <div class="cardsWrap">
+        <div id="cardsInner">
+          <div class="hint" style="margin:4px;">부서를 선택하면 반 목록이 자동으로 채워집니다. 반 선택 후 조회 버튼을 누르세요.</div>
+        </div>
+      </div>
+
+      <!-- Copy/엑셀 용 버퍼(숨김) -->
+      <textarea id="copyBuffer" class="hide"></textarea>
+      <textarea id="tsvBuffer" class="hide"></textarea>
+
+      <div class="hint">
+        • 원본 시트(N부 예꼬 주소록)의 <b>모든 열을 그대로</b> 카드 형태로 출력합니다(열을 추리지 않음).<br/>
+        • 이 시트는 원본이므로 이 도구는 <b>읽기 전용</b>입니다 — 시트에 값을 쓰지 않습니다.<br/>
+        • 반 목록은 시트에서 실제 존재하는 값만 자동으로 뽑아 보여줍니다(연도별로 반이 바뀌어도 코드 수정 불필요).<br/>
+        • 카드형이라 열이 많아도 가로 스크롤 없이 모바일에서도 확인할 수 있습니다.<br/>
+        • 🔒 이 화면은 원본 시트 주소를 전혀 알지 못합니다 — 조회는 서버(Apps Script) 안에서만 이뤄집니다.
+      </div>
+    </div>
+  </div>
+
+  <div class="actionbar">
+    <div class="inner" style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+      <button class="primary" id="btnFetch" type="button">조회</button>
+      <button class="copy" id="btnCopyText" type="button" disabled>단순텍스트복사</button>
+      <button class="copy" id="btnExcel" type="button" disabled>엑셀(.xlsx) 다운로드</button>
+      <button class="copy" id="btnImage" type="button" disabled>이미지 저장</button>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    // 부서별로 불러온 (headers, rows) 캐시 — 반/학년 드롭다운도 여기서 채운다
+    const cache = { "1": null, "2": null };
+
+    function escapeHtml(str=""){
+      return String(str).replace(/[&<>"']/g, s => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]));
+    }
+    function setStatus(msg, isError=false){
+      const el = $("status");
+      el.innerHTML = isError ? `⚠️ <b>${escapeHtml(msg)}</b>` : `✅ <b>${escapeHtml(msg)}</b>`;
+      el.style.color = isError ? "rgba(255,160,160,.95)" : "rgba(180,210,255,.95)";
+    }
+
+    // --- 서버(Code.gs) 호출 ---
+    // 🔒 브라우저는 시트 주소를 전혀 모른다. dept("1"/"2")만 서버로 보내고,
+    // 실제 시트 조회는 전부 Google Apps Script 서버 안에서 일어난다(google.script.run).
+    function runServer(fnName, ...args){
+      return new Promise((resolve, reject) => {
+        google.script.run
+          .withSuccessHandler(resolve)
+          .withFailureHandler((err) => reject(new Error((err && err.message) ? err.message : String(err))))
+          [fnName](...args);
+      });
+    }
+
+    async function loadDeptData(dept){
+      if(cache[dept]) return cache[dept];
+      const table = await runServer("fetchDeptTable", dept);
+      if(!table || !table.headers || !table.headers.length){
+        throw new Error("시트 헤더를 읽지 못했습니다.");
+      }
+      cache[dept] = table;
+      return table;
+    }
+
+    function findColIndex(headers, patterns){
+      const hs = (headers || []).map(h => String(h||"").trim());
+      for(let i=0;i<hs.length;i++){
+        for(const p of patterns){ if(p.test(hs[i])) return i; }
+      }
+      return -1;
+    }
+
+    // 반 이름 자연 정렬(우1,우2,...,드1,드2,... 처럼 숫자를 숫자로 비교)
+    function sortClassNames(names){
+      return [...names].sort((a,b) => a.localeCompare(b, "ko", { numeric: true }));
+    }
+
+    // 진짜 "반"만 인정한다 — 우N/드N 형태가 아닌 값(송림, 타교회, 해외파송, 1부/2부 이동 표기 등)은
+    // 실제 반이 아니라 행정 메모성 값이라 대표님 요청(2026-08-30)으로 반 목록/조회 결과에서 제외한다.
+    const CLASS_NAME_RE = /^[우드]\d+$/;
+
+    function colIdx(table){
+      return {
+        idxTrack: findColIndex(table.headers, [/^학년$/]),
+        idxClass: findColIndex(table.headers, [/^반$/, /\bclass\b/i])
+      };
+    }
+
+    function fillSelect(sel, items, allLabel, keepValue){
+      sel.innerHTML = "";
+      const optAll = document.createElement("option");
+      optAll.value = "__ALL__"; optAll.textContent = allLabel;
+      sel.appendChild(optAll);
+      for(const name of items){
+        const opt = document.createElement("option");
+        opt.value = name; opt.textContent = name;
+        sel.appendChild(opt);
+      }
+      if(keepValue && items.includes(keepValue)) sel.value = keepValue;
+    }
+
+    // 학년(드림/우리) 선택에 맞춰 반 목록을 다시 계산 — 재조회 없이 캐시에서 즉시 갱신
+    function updateClassOptions(table, idx, keepValue){
+      const track = $("trackSel").value;
+      const names = new Set();
+      for(const r of table.rows){
+        const cVal = String(r[idx.idxClass] ?? "").trim();
+        if(!CLASS_NAME_RE.test(cVal)) continue;
+        if(track !== "__ALL__" && idx.idxTrack >= 0){
+          if(String(r[idx.idxTrack] ?? "").trim() !== track) continue;
+        }
+        names.add(cVal);
+      }
+      const sorted = sortClassNames([...names]);
+      fillSelect($("classSel"), sorted, `전체 (${sorted.length}개 반)`, keepValue);
+    }
+
+    async function refreshOptions(){
+      const dept = $("dept").value;
+      const keepTrack = $("trackSel").value;
+      const keepClass = $("classSel").value;
+      $("trackSel").innerHTML = `<option value="__ALL__">불러오는 중...</option>`;
+      $("classSel").innerHTML = `<option value="__ALL__">불러오는 중...</option>`;
+      $("btnFetch").disabled = true;
+      setStatus(`${dept}부 시트를 불러와 학년/반 목록을 확인하는 중...`);
+      try{
+        const table = await loadDeptData(dept);
+        const idx = colIdx(table);
+        if(idx.idxClass < 0) throw new Error('시트에서 "반" 열을 찾지 못했습니다.');
+
+        const trackNames = new Set();
+        if(idx.idxTrack >= 0){
+          for(const r of table.rows){
+            const v = String(r[idx.idxTrack] ?? "").trim();
+            if(v) trackNames.add(v);
+          }
+        }
+        const trackSorted = [...trackNames].sort((a,b) => a.localeCompare(b, "ko"));
+        fillSelect($("trackSel"), trackSorted, `전체 (${trackSorted.length}개 학년)`, keepTrack);
+
+        updateClassOptions(table, idx, keepClass);
+
+        setStatus(`${dept}부 목록 로딩 완료: 학년 ${trackSorted.length}개, 총 ${table.rows.length}행`);
+      }catch(e){
+        $("trackSel").innerHTML = `<option value="__ALL__">로딩 실패</option>`;
+        $("classSel").innerHTML = `<option value="__ALL__">로딩 실패</option>`;
+        setStatus(e.message || String(e), true);
+      }finally{
+        $("btnFetch").disabled = false;
+      }
+    }
+
+    function onTrackChange(){
+      const dept = $("dept").value;
+      const table = cache[dept];
+      if(!table) return;
+      updateClassOptions(table, colIdx(table), "__ALL__");
+    }
+
+    // 이미지 저장은 인원이 너무 많으면 이미지가 지나치게 길어지고 브라우저가 느려지므로 상한을 둔다.
+    const IMAGE_SAVE_MAX = 30;
+
+    // 표 대신 카드형으로 렌더링 — 열이 몇 개든 라벨/값을 세로로 쌓아 가로 스크롤 없이 표시
+    function renderCards(headers, rows){
+      const inner = $("cardsInner");
+      inner.innerHTML = "";
+
+      if(!rows.length){
+        inner.innerHTML = `<div class="hint" style="margin:4px;color:rgba(169,183,215,.9);">해당 조건 데이터 없음</div>`;
+        return;
+      }
+
+      const idxName = findColIndex(headers, [/이름/, /\bname\b/i]);
+
+      rows.forEach((r, i) => {
+        const card = document.createElement("div");
+        card.className = "childCard";
+
+        const head = document.createElement("div");
+        head.className = "ccHead";
+        const nameVal = idxName >= 0 ? String(r[idxName] ?? "").trim() : "";
+        head.textContent = nameVal ? `${i+1}. ${nameVal}` : `${i+1}번째`;
+        card.appendChild(head);
+
+        const fields = document.createElement("div");
+        fields.className = "fields";
+        headers.forEach((h, ci) => {
+          const field = document.createElement("div");
+          field.className = "field";
+          const k = document.createElement("div");
+          k.className = "k";
+          k.textContent = h || `열${ci+1}`;
+          const v = document.createElement("div");
+          v.className = "v";
+          v.textContent = r[ci] ?? "";
+          field.appendChild(k);
+          field.appendChild(v);
+          fields.appendChild(field);
+        });
+        card.appendChild(fields);
+        inner.appendChild(card);
+      });
+    }
+
+    function buildTSV(headers, rows){
+      const lines = [headers.join("\t")];
+      for(const r of rows){
+        lines.push(r.map(x => String(x ?? "").replace(/\t/g, " ").replace(/\r?\n/g, " / ")).join("\t"));
+      }
+      return lines.join("\n");
+    }
+
+    // 01번(기도제목 추출기)과 같은 톤의 "카톡 붙여넣기용" 평문 텍스트
+    function buildPlainText(headers, rows, label){
+      const idxName = findColIndex(headers, [/이름/, /\bname\b/i]);
+      const lines = [];
+      lines.push(`🌱 ${label} 양육보고서`);
+      lines.push("");
+      rows.forEach((r, i) => {
+        const nameVal = idxName >= 0 ? String(r[idxName] ?? "").trim() : "";
+        lines.push(`■ ${i+1}. ${nameVal || "(이름 없음)"}`);
+        headers.forEach((h, ci) => {
+          const val = String(r[ci] ?? "").trim();
+          if(!val) return;
+          lines.push(`- ${h}: ${val}`);
+        });
+        if(i !== rows.length - 1) lines.push("");
+      });
+      return lines.join("\n");
+    }
+
+    async function copyToClipboard(text){
+      if(!String(text||"").trim()) throw new Error("복사할 내용이 없습니다.");
+      try{
+        await navigator.clipboard.writeText(text);
+        return true;
+      }catch(e){
+        const ta = $("copyBuffer");
+        ta.classList.remove("hide");
+        ta.value = text;
+        ta.focus();
+        ta.select();
+        const ok = document.execCommand("copy");
+        ta.classList.add("hide");
+        if(!ok) throw e;
+        return true;
+      }
+    }
+
+    function setResultButtonsEnabled(enabled){
+      $("btnExcel").disabled = !enabled;
+      $("btnCopyText").disabled = !enabled;
+      $("btnImage").disabled = !enabled;
+    }
+
+    async function handleFetch(){
+      const dept = $("dept").value;
+      const track = $("trackSel").value;
+      const classSel = $("classSel").value;
+      const trackLabel = (track === "__ALL__") ? "전체" : track;
+      const classLabel = (classSel === "__ALL__") ? "전체" : classSel;
+
+      $("pickedDept").textContent = dept + "부";
+      $("pickedTrack").textContent = trackLabel;
+      $("pickedClass").textContent = classLabel;
+      $("pickedCount").textContent = "0";
+      setResultButtonsEnabled(false);
+
+      setStatus("서버에서 데이터를 불러오는 중...");
+      try{
+        const table = await loadDeptData(dept);
+        const idx = colIdx(table);
+
+        let filtered = table.rows.filter(r => r && r.some(v => String(v||"").trim() !== ""));
+        // 항상 실제 반이 있는 예꼬만(송림/타교회/해외파송 등 반 미배정 행은 제외)
+        if(idx.idxClass >= 0){
+          filtered = filtered.filter(r => CLASS_NAME_RE.test(String(r[idx.idxClass] ?? "").trim()));
+        }
+        if(track !== "__ALL__" && idx.idxTrack >= 0){
+          filtered = filtered.filter(r => String(r[idx.idxTrack] ?? "").trim() === track);
+        }
+        if(classSel !== "__ALL__" && idx.idxClass >= 0){
+          filtered = filtered.filter(r => String(r[idx.idxClass] ?? "").trim() === classSel);
+        }
+
+        renderCards(table.headers, filtered);
+        $("pickedCount").textContent = String(filtered.length);
+
+        const label = `${dept}부 ${trackLabel} ${classLabel}`;
+        $("tsvBuffer").value = buildTSV(table.headers, filtered);
+        $("tsvBuffer").dataset.label = label;
+        $("tsvBuffer").dataset.plainText = buildPlainText(table.headers, filtered, label);
+
+        setResultButtonsEnabled(filtered.length > 0);
+        setStatus(`조회 완료: ${filtered.length}명 (${label})`);
+      }catch(e){
+        renderCards(["오류"], []);
+        setStatus(e.message || String(e), true);
+      }
+    }
+
+    async function handleCopyText(){
+      try{
+        const text = $("tsvBuffer").dataset.plainText || "";
+        await copyToClipboard(text);
+        setStatus("텍스트를 클립보드에 복사했습니다.");
+      }catch(e){
+        setStatus("복사 실패: " + (e.message || String(e)), true);
+      }
+    }
+
+    // 엑셀 레이아웃(2026-08-30 대표님 요청): 별도 제목행/여백 없이 1행=헤더, 2행부터 데이터.
+    // 파일명 자체에 부서/학년/반 정보가 들어가므로 시트 안에 제목을 따로 넣지 않는다.
+    // ExcelJS 사용 이유: 무료 SheetJS(xlsx.js)는 셀 서식(줄바꿈 등)을 저장하지 못해서,
+    // 반 배정 참고사항처럼 긴 서술형 텍스트가 옆의 빈 칸으로 시각적으로 넘쳐 보이는 문제가 있었음(2026-08-30).
+    // ExcelJS는 wrapText를 지원해 긴 텍스트 열은 셀 안에서 줄바꿈되도록 만들 수 있다.
+    const LONG_TEXT_COL_RE = [/참고사항/, /특이사항/, /주소/];
+
+    async function handleExcel(){
+      try{
+        const tsv = $("tsvBuffer").value;
+        if(!String(tsv||"").trim()){
+          setStatus("다운로드할 내용이 없습니다. 먼저 조회 를 눌러주세요.", true);
+          return;
+        }
+        if(typeof ExcelJS === "undefined"){
+          setStatus("엑셀 라이브러리를 불러오지 못했습니다(네트워크/차단 설정 확인).", true);
+          return;
+        }
+
+        const lines = tsv.split(/\r?\n/).filter(l => l !== "");
+        const aoa = lines.map(line => line.split("\t")); // 1행=헤더, 2행~=데이터, 한 사람 = 한 행
+        const headers = aoa[0] || [];
+
+        const label = $("tsvBuffer").dataset.label || "양육보고서";
+        const wb = new ExcelJS.Workbook();
+        const sheetName = (label.replace(/\s+/g, "_") || "Sheet1").slice(0, 31);
+        const ws = wb.addWorksheet(sheetName);
+
+        ws.addRows(aoa);
+
+        const headerRow = ws.getRow(1);
+        headerRow.font = { bold: true };
+        headerRow.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+
+        headers.forEach((h, i) => {
+          const isLong = LONG_TEXT_COL_RE.some(re => re.test(h || ""));
+          const col = ws.getColumn(i + 1);
+          col.width = isLong ? 45 : Math.min(Math.max(String(h||"").length + 4, 10), 20);
+          col.alignment = { vertical: "top", wrapText: isLong };
+        });
+
+        const buf = await wb.xlsx.writeBuffer();
+        const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = `${label.replace(/\s+/g, "_")}_양육보고서.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+
+        setStatus("엑셀(.xlsx) 파일을 다운로드했습니다.");
+      }catch(e){
+        setStatus("엑셀 다운로드 실패: " + (e.message || String(e)), true);
+      }
+    }
+
+    async function handleImage(){
+      try{
+        if(typeof html2canvas === "undefined"){
+          setStatus("이미지 저장 라이브러리를 불러오지 못했습니다(네트워크/차단 설정 확인).", true);
+          return;
+        }
+        const inner = $("cardsInner");
+        const cardCount = inner.querySelectorAll(".childCard").length;
+        if(cardCount === 0){
+          setStatus("저장할 카드가 없습니다. 먼저 조회 를 눌러주세요.", true);
+          return;
+        }
+        if(cardCount > IMAGE_SAVE_MAX){
+          setStatus(`인원이 ${cardCount}명이라 이미지 1장으로 저장하기엔 너무 깁니다(최대 ${IMAGE_SAVE_MAX}명). 반을 좁혀서 다시 조회하거나 엑셀 다운로드를 이용해주세요.`, true);
+          return;
+        }
+
+        setStatus("이미지를 만드는 중...");
+        const canvas = await html2canvas(inner, {
+          backgroundColor: "#0e1733",
+          scale: Math.min(2, window.devicePixelRatio || 1.5),
+          useCORS: true
+        });
+
+        const label = ($("tsvBuffer").dataset.label || "양육보고서").replace(/\s+/g, "_");
+        const filename = `${label}_양육보고서.png`;
+
+        canvas.toBlob((blob) => {
+          if(!blob){ setStatus("이미지 생성에 실패했습니다.", true); return; }
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url; a.download = filename;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 2000);
+          setStatus("이미지(.png) 파일을 저장했습니다.");
+        }, "image/png");
+      }catch(e){
+        setStatus("이미지 저장 실패: " + (e.message || String(e)), true);
+      }
+    }
+
+    $("btnFetch").addEventListener("click", handleFetch);
+    $("btnCopyText").addEventListener("click", handleCopyText);
+    $("btnExcel").addEventListener("click", handleExcel);
+    $("btnImage").addEventListener("click", handleImage);
+    $("dept").addEventListener("change", () => { refreshOptions(); });
+    $("trackSel").addEventListener("change", () => { onTrackChange(); });
+
+    refreshOptions();
+  </script>
+</body>
+</html>
