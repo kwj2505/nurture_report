@@ -17,10 +17,43 @@
  *      SHEET1_LINK = 1부 예꼬 주소록 시트 링크 (예: https://docs.google.com/spreadsheets/d/.../edit?gid=...)
  *      SHEET2_LINK = 2부 예꼬 주소록 시트 링크
  * 4) 저장만 하면 끝 — 코드 수정도, 재배포(새 배포)도 필요 없다. 다음 요청부터 바로 새 링크로 조회된다.
+ *
+ * ── 접근 허용자 관리 (배포 시 "액세스 권한"을 "모든 Google 계정 사용자"로 설정하는 것과 짝) ──
+ * 스크립트 속성에 ALLOWED_EMAILS 를 등록하면, 그 목록에 있는 구글 계정만 화면/데이터를 볼 수 있다.
+ *      ALLOWED_EMAILS = teacher1@gmail.com, teacher2@gmail.com, ...  (쉼표로 구분)
+ * ALLOWED_EMAILS를 등록하지 않으면 제한 없이(로그인한 모든 구글 계정) 허용된다 —
+ * 그래서 "정해진 사람만" 쓰게 하려면 반드시 이 속성을 등록해야 한다. 사람이 바뀌면 이 값만 수정하면 된다.
  */
+
+// 배포 시 "액세스 권한"을 "모든 Google 계정 사용자"로 해야 이메일을 확인할 수 있다.
+// ("모든 사용자(익명 포함)"으로 하면 로그인 정보가 없어 항상 차단됨)
+function getCurrentEmail_() {
+  try {
+    return (Session.getActiveUser().getEmail() || '').trim().toLowerCase();
+  } catch (e) {
+    return '';
+  }
+}
+
+function isAllowedUser_() {
+  const raw = PropertiesService.getScriptProperties().getProperty('ALLOWED_EMAILS');
+  if (!raw || !raw.trim()) return true; // 허용 목록 미설정 시 제한 없음
+  const allowed = raw.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  const email = getCurrentEmail_();
+  if (!email) return false; // 로그인 계정을 확인할 수 없으면 차단(=배포 액세스 권한을 반드시 "모든 Google 계정 사용자"로)
+  return allowed.includes(email);
+}
 
 // 이 배포(Web App)에 접속했을 때 보여줄 화면
 function doGet(e) {
+  if (!isAllowedUser_()) {
+    return HtmlService.createHtmlOutput(
+      '<div style="font-family:sans-serif;padding:40px;text-align:center;color:#333;">' +
+      '🔒 접근 권한이 없습니다.<br/><br/>' +
+      '이 계정(' + (getCurrentEmail_() || '알 수 없음') + ')은 허용 목록에 없습니다.<br/>' +
+      '관리자에게 계정 등록을 요청해주세요.</div>'
+    ).setTitle('접근 제한');
+  }
   return HtmlService.createTemplateFromFile('Index')
     .evaluate()
     .setTitle('🌱 유치부 양육보고서 추출')
@@ -33,6 +66,9 @@ function doGet(e) {
  * 원본 시트는 절대 쓰지 않는다 — getDisplayValues()로 "읽기"만 한다.
  */
 function fetchDeptTable(dept) {
+  if (!isAllowedUser_()) {
+    throw new Error('접근 권한이 없는 계정입니다(' + (getCurrentEmail_() || '알 수 없음') + '). 관리자에게 문의해주세요.');
+  }
   const key = (String(dept) === '1') ? 'SHEET1_LINK' : 'SHEET2_LINK';
   const link = PropertiesService.getScriptProperties().getProperty(key);
   if (!link) {
@@ -97,4 +133,11 @@ function checkSetup() {
       Logger.log(`⚠️ ${key}: 설정은 됐지만 시트를 열 수 없음 — ${err.message}`);
     }
   });
+
+  const allowed = props.getProperty('ALLOWED_EMAILS');
+  if (!allowed || !allowed.trim()) {
+    Logger.log('⚠️ ALLOWED_EMAILS: 미설정 — 로그인한 모든 구글 계정이 접근 가능한 상태입니다. "정해진 사람만" 쓰게 하려면 등록하세요.');
+  } else {
+    Logger.log(`✅ ALLOWED_EMAILS: 설정됨 (${allowed.split(',').map(s => s.trim()).filter(Boolean).length}명) — ${allowed}`);
+  }
 }
