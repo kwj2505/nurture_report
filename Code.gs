@@ -29,6 +29,8 @@
  *       다시 올리면, "양육시트 합본"이라는 별도의 새 구글시트에 그 반 데이터를 자동으로 반영한다.
  * 원칙:
  *   - 원본 마스터 시트(1부/2부 예꼬 주소록)에는 절대 쓰지 않는다. 항상 "합본" 시트에만 쓴다.
+ *   - 합본 시트 안에서도 부서를 열로 섞지 않고 "1부"/"2부" 탭으로 나눈다(원본과 같은 방식) —
+ *     업로드는 한 화면에서 하지만, 서버가 dept 값 보고 알맞은 탭에 넣는다.
  *   - 같은 반을 다시 올리면, 그 반의 기존 행을 지우고 새 내용으로 통째로 교체한다(중복 방지).
  *   - 반이 다르면 업로드 자체를 막는다(업로드 파일 안의 "반" 값이 화면에서 고른 반과 다르면 거부).
  *   - 행 추가/삭제는 다루지 않는다(새 친구 등록·학생 삭제는 마스터 시트에서 관리자가 직접 처리).
@@ -165,8 +167,9 @@ function findHeaderIndex_(headers, patterns) {
 }
 
 /**
- * 최초 1회 실행용 — "양육시트 합본" 새 구글시트를 만들고 헤더를 세팅한다.
- * SHEET1_LINK/SHEET2_LINK가 먼저 설정돼 있어야 한다(원본 열 구조를 그대로 가져오려고).
+ * 최초 1회 실행용 — "양육시트 합본" 새 구글시트를 만들고 "1부"/"2부" 탭 2개를 세팅한다.
+ * (2026-09-02 변경: 부서를 열로 섞지 않고, 원본처럼 탭으로 나눔 — 대표님 요청)
+ * SHEET1_LINK/SHEET2_LINK가 먼저 설정돼 있어야 한다(각 탭 열 구조를 그대로 가져오려고).
  * 실행 후 로그에 뜨는 URL을 복사해서 스크립트 속성 MERGED_SHEET_LINK 에 등록하면 끝.
  * 이미 합본 시트가 있으면(=MERGED_SHEET_LINK가 이미 설정돼 있으면) 실수로 새로 만들지 않도록 막는다.
  */
@@ -176,25 +179,37 @@ function setupMergedSheet() {
     Logger.log('⚠️ 이미 MERGED_SHEET_LINK가 설정돼 있습니다. 새로 만들려면 먼저 그 속성을 지우고 다시 실행하세요.');
     return;
   }
-  const link = props.getProperty('SHEET2_LINK') || props.getProperty('SHEET1_LINK');
-  if (!link) {
+  const link1 = props.getProperty('SHEET1_LINK');
+  const link2 = props.getProperty('SHEET2_LINK');
+  if (!link1 && !link2) {
     Logger.log('❌ SHEET1_LINK 또는 SHEET2_LINK가 먼저 설정돼 있어야 합니다.');
     return;
   }
-  const info = parseSheetLink_(link);
-  const srcSs = SpreadsheetApp.openById(info.id);
-  const srcSheet = info.gid ? (getSheetByGid_(srcSs, info.gid) || srcSs.getSheets()[0]) : srcSs.getSheets()[0];
-  const srcHeaders = srcSheet.getRange(1, 1, 1, srcSheet.getLastColumn()).getDisplayValues()[0]
-    .map(h => String(h || '').replace(/\r?\n/g, ' ').trim());
+
+  function headerFor_(link) {
+    const info = parseSheetLink_(link);
+    const ss = SpreadsheetApp.openById(info.id);
+    const sh = info.gid ? (getSheetByGid_(ss, info.gid) || ss.getSheets()[0]) : ss.getSheets()[0];
+    return sh.getRange(1, 1, 1, sh.getLastColumn()).getDisplayValues()[0]
+      .map(h => String(h || '').replace(/\r?\n/g, ' ').trim());
+  }
 
   const newSs = SpreadsheetApp.create('유치부 양육시트 합본');
-  const sheet = newSs.getSheets()[0];
-  sheet.setName('합본');
+  const sheet1 = newSs.getSheets()[0];
+  sheet1.setName('1부');
+  const sheet2 = newSs.insertSheet('2부');
 
-  // 합본 열 구성: 부서(구분용, 원본엔 없는 열) + 원본 열 그대로 + 제출계정/제출일시(누가 언제 올렸는지 기록)
-  const headers = ['부서'].concat(srcHeaders).concat(['제출계정', '제출일시']);
-  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-  sheet.setFrozenRows(1);
+  // 각 탭 열 구성: 원본 열 그대로 + 제출계정/제출일시(누가 언제 올렸는지 기록). "부서" 열은 필요 없음 — 탭 자체가 부서 구분.
+  if (link1) {
+    const h1 = headerFor_(link1).concat(['제출계정', '제출일시']);
+    sheet1.getRange(1, 1, 1, h1.length).setValues([h1]);
+    sheet1.setFrozenRows(1);
+  }
+  if (link2) {
+    const h2 = headerFor_(link2).concat(['제출계정', '제출일시']);
+    sheet2.getRange(1, 1, 1, h2.length).setValues([h2]);
+    sheet2.setFrozenRows(1);
+  }
 
   // MERGED_FOLDER_LINK가 설정돼 있으면 그 폴더 안으로 옮긴다(설정 안 했으면 내 드라이브 최상위에 그대로 둠).
   const folderLink = props.getProperty('MERGED_FOLDER_LINK');
@@ -298,35 +313,38 @@ function cleanupTempFile_(fileId) {
 /**
  * 합본 시트에서 그 부서+반의 기존 행을 지우고, 업로드된 새 데이터로 통째로 교체한다.
  * (같은 반을 여러 번 올려도 중복이 안 쌓이는 이유가 바로 이 "교체" 방식)
+ * 부서는 "열"이 아니라 "탭"으로 구분한다("1부"/"2부" 탭) — 원본과 같은 방식(2026-09-02 변경).
  */
 function replaceClassBlock_(mergedLink, dept, className, headers, rows, uploaderEmail) {
   const info = parseSheetLink_(mergedLink);
   const ss = SpreadsheetApp.openById(info.id);
-  const sheet = info.gid ? (getSheetByGid_(ss, info.gid) || ss.getSheets()[0]) : ss.getSheets()[0];
-
-  const mergedHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
-  const idxDept = mergedHeaders.indexOf('부서');
-  const idxClassInMerged = findHeaderIndex_(mergedHeaders, [/^반$/]);
-  if (idxDept < 0 || idxClassInMerged < 0) {
-    throw new Error('합본 시트 형식이 예상과 다릅니다("부서"/"반" 열을 확인하세요). 관리자에게 문의해주세요.');
+  const tabName = (String(dept) === '1') ? '1부' : '2부';
+  const sheet = ss.getSheetByName(tabName);
+  if (!sheet) {
+    throw new Error(`합본 시트에서 "${tabName}" 탭을 찾지 못했습니다. 관리자에게 문의해주세요(setupMergedSheet를 다시 실행해야 할 수 있습니다).`);
   }
 
-  // 1) 같은 부서+반인 기존 행 찾아서 지움 — 뒤에서부터 지워야 행 번호가 안 꼬인다
+  const mergedHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+  const idxClassInMerged = findHeaderIndex_(mergedHeaders, [/^반$/]);
+  if (idxClassInMerged < 0) {
+    throw new Error(`합본 시트 "${tabName}" 탭 형식이 예상과 다릅니다("반" 열을 확인하세요). 관리자에게 문의해주세요.`);
+  }
+
+  // 1) 같은 반인 기존 행 찾아서 지움(이 탭은 이미 해당 부서뿐이라 반 값만 비교하면 됨) — 뒤에서부터 지워야 행 번호가 안 꼬인다
   const lastRow = sheet.getLastRow();
   if (lastRow >= 2) {
     const existing = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getDisplayValues();
     for (let i = existing.length - 1; i >= 0; i--) {
-      const r = existing[i];
-      if (String(r[idxDept] || '').trim() === (dept + '부') && String(r[idxClassInMerged] || '').trim() === className) {
+      if (String(existing[i][idxClassInMerged] || '').trim() === className) {
         sheet.deleteRow(2 + i);
       }
     }
   }
 
-  // 2) 새 데이터 추가: 부서 + 업로드 파일 원본 열 그대로 + 제출계정/제출일시
+  // 2) 새 데이터 추가: 업로드 파일 원본 열 그대로 + 제출계정/제출일시
   const tz = Session.getScriptTimeZone() || 'Asia/Seoul';
   const now = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm');
-  const newRows = rows.map(r => [dept + '부'].concat(r).concat([uploaderEmail || '', now]));
+  const newRows = rows.map(r => r.concat([uploaderEmail || '', now]));
   const startRow = sheet.getLastRow() + 1;
   sheet.getRange(startRow, 1, newRows.length, newRows[0].length).setValues(newRows);
 }
