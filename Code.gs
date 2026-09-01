@@ -34,11 +34,15 @@
  *   - 행 추가/삭제는 다루지 않는다(새 친구 등록·학생 삭제는 마스터 시트에서 관리자가 직접 처리).
  *
  * 최초 설정(1회):
- *   1) 스크립트 속성에 TEACHER_EMAILS 등록(업로드를 허용할 교사 계정, 쉼표 구분)
+ *   1) (선택) 스크립트 속성에 MERGED_FOLDER_LINK 등록 — 합본 시트를 특정 드라이브 폴더 안에 만들고 싶을 때.
+ *      예: https://drive.google.com/drive/folders/xxxxxxxx?usp=drive_link
+ *      비워두면 "내 드라이브" 최상위에 생성된다(나중에 수동으로 옮겨도 URL은 안 바뀜).
+ *   2) (선택) 스크립트 속성에 TEACHER_EMAILS 등록(업로드를 허용할 교사 계정, 쉼표 구분)
  *      — 조회(ALLOWED_EMAILS)와는 별개 목록. 조회는 그대로 두고 업로드만 더 좁게 제한하고 싶을 때 씀.
- *   2) 함수 선택 박스에서 setupMergedSheet 실행 → 로그에 뜨는 "합본 시트 URL"을 복사
- *   3) 스크립트 속성에 MERGED_SHEET_LINK = 그 URL 등록
- *   4) "Drive API" 고급 서비스 활성화 필요(왼쪽 서비스 + → Drive API 추가) — xlsx 파일을 읽기 위해 필요
+ *      — 비워두면 조회 가능한 사람(=배포 링크를 아는 사람) 누구나 업로드도 가능하다.
+ *   3) 함수 선택 박스에서 setupMergedSheet 실행 → 로그에 뜨는 "합본 시트 URL"을 복사
+ *   4) 스크립트 속성에 MERGED_SHEET_LINK = 그 URL 등록
+ *   5) "Drive API" 고급 서비스 활성화 필요(왼쪽 서비스 + → Drive API 추가) — xlsx 파일을 읽기 위해 필요
  */
 
 // 배포 시 "액세스 권한"을 "모든 Google 계정 사용자"로 해야 이메일을 확인할 수 있다.
@@ -138,6 +142,13 @@ function parseSheetLink_(link) {
   return { id: m[1], gid: gidM ? gidM[1] : null };
 }
 
+function parseFolderLink_(link) {
+  const s = String(link || '');
+  const m = s.match(/folders\/([a-zA-Z0-9-_]+)/);
+  if (!m) throw new Error('폴더 링크 형식을 인식할 수 없습니다: ' + s);
+  return m[1];
+}
+
 function getSheetByGid_(ss, gid) {
   const sheets = ss.getSheets();
   for (let i = 0; i < sheets.length; i++) {
@@ -184,6 +195,19 @@ function setupMergedSheet() {
   const headers = ['부서'].concat(srcHeaders).concat(['제출계정', '제출일시']);
   sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
   sheet.setFrozenRows(1);
+
+  // MERGED_FOLDER_LINK가 설정돼 있으면 그 폴더 안으로 옮긴다(설정 안 했으면 내 드라이브 최상위에 그대로 둠).
+  const folderLink = props.getProperty('MERGED_FOLDER_LINK');
+  if (folderLink) {
+    try {
+      const folderId = parseFolderLink_(folderLink);
+      const folder = DriveApp.getFolderById(folderId);
+      DriveApp.getFileById(newSs.getId()).moveTo(folder);
+      Logger.log('✅ 지정한 폴더로 옮겼습니다: ' + folder.getName());
+    } catch (err) {
+      Logger.log('⚠️ 지정한 폴더로 옮기지 못했습니다(수동으로 옮겨주세요): ' + err.message);
+    }
+  }
 
   Logger.log('✅ 합본 시트를 만들었습니다: ' + newSs.getName());
   Logger.log('아래 URL을 복사해서 스크립트 속성 MERGED_SHEET_LINK 에 등록하세요:');
@@ -353,6 +377,19 @@ function checkSetup() {
       Logger.log('✅ MERGED_SHEET_LINK: 설정됨, 시트 열기 성공');
     } catch (err) {
       Logger.log(`⚠️ MERGED_SHEET_LINK: 설정은 됐지만 시트를 열 수 없음 — ${err.message}`);
+    }
+  }
+
+  const folderLink = props.getProperty('MERGED_FOLDER_LINK');
+  if (!folderLink) {
+    Logger.log('ℹ️ MERGED_FOLDER_LINK: 미설정 — 합본 시트가 내 드라이브 최상위에 생성됩니다(선택 사항이라 문제 없음).');
+  } else {
+    try {
+      const folderId = parseFolderLink_(folderLink);
+      const name = DriveApp.getFolderById(folderId).getName();
+      Logger.log(`✅ MERGED_FOLDER_LINK: 설정됨, 폴더 열기 성공(${name})`);
+    } catch (err) {
+      Logger.log(`⚠️ MERGED_FOLDER_LINK: 설정은 됐지만 폴더를 열 수 없음 — ${err.message}`);
     }
   }
 }
