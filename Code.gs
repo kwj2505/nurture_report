@@ -23,6 +23,22 @@
  *      ALLOWED_EMAILS = teacher1@gmail.com, teacher2@gmail.com, ...  (쉼표로 구분)
  * ALLOWED_EMAILS를 등록하지 않으면 제한 없이(로그인한 모든 구글 계정) 허용된다 —
  * 그래서 "정해진 사람만" 쓰게 하려면 반드시 이 속성을 등록해야 한다. 사람이 바뀌면 이 값만 수정하면 된다.
+ *
+ * ── 교사 업로드 기능 (2026-09-02 추가) ──────────────────────────────────
+ * 목적: 각 반 교사가 자기 반 엑셀을 받아서 뒷부분(반 배정 참고사항/특이사항 등)만 수정한 뒤
+ *       다시 올리면, "양육시트 합본"이라는 별도의 새 구글시트에 그 반 데이터를 자동으로 반영한다.
+ * 원칙:
+ *   - 원본 마스터 시트(1부/2부 예꼬 주소록)에는 절대 쓰지 않는다. 항상 "합본" 시트에만 쓴다.
+ *   - 같은 반을 다시 올리면, 그 반의 기존 행을 지우고 새 내용으로 통째로 교체한다(중복 방지).
+ *   - 반이 다르면 업로드 자체를 막는다(업로드 파일 안의 "반" 값이 화면에서 고른 반과 다르면 거부).
+ *   - 행 추가/삭제는 다루지 않는다(새 친구 등록·학생 삭제는 마스터 시트에서 관리자가 직접 처리).
+ *
+ * 최초 설정(1회):
+ *   1) 스크립트 속성에 TEACHER_EMAILS 등록(업로드를 허용할 교사 계정, 쉼표 구분)
+ *      — 조회(ALLOWED_EMAILS)와는 별개 목록. 조회는 그대로 두고 업로드만 더 좁게 제한하고 싶을 때 씀.
+ *   2) 함수 선택 박스에서 setupMergedSheet 실행 → 로그에 뜨는 "합본 시트 URL"을 복사
+ *   3) 스크립트 속성에 MERGED_SHEET_LINK = 그 URL 등록
+ *   4) "Drive API" 고급 서비스 활성화 필요(왼쪽 서비스 + → Drive API 추가) — xlsx 파일을 읽기 위해 필요
  */
 
 // 배포 시 "액세스 권한"을 "모든 Google 계정 사용자"로 해야 이메일을 확인할 수 있다.
@@ -42,6 +58,24 @@ function isAllowedUser_() {
   const email = getCurrentEmail_();
   if (!email) return false; // 로그인 계정을 확인할 수 없으면 차단(=배포 액세스 권한을 반드시 "모든 Google 계정 사용자"로)
   return allowed.includes(email);
+}
+
+// 업로드(쓰기) 권한은 조회 권한(ALLOWED_EMAILS)과 별개 목록으로 관리한다.
+// TEACHER_EMAILS가 비어있으면 조회 가능한 사람 누구나 업로드도 가능(제한 없음) —
+// "교사만 업로드"로 좁히고 싶으면 이 속성에 교사 이메일만 등록하면 된다.
+function isTeacher_() {
+  if (!isAllowedUser_()) return false; // 조회 권한이 없으면 업로드도 당연히 불가
+  const raw = PropertiesService.getScriptProperties().getProperty('TEACHER_EMAILS');
+  if (!raw || !raw.trim()) return true;
+  const allowed = raw.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+  const email = getCurrentEmail_();
+  if (!email) return false;
+  return allowed.includes(email);
+}
+
+// 클라이언트가 페이지 로드 시 호출 — 업로드 카드를 보여줄지 말지 결정용
+function amITeacher() {
+  return isTeacher_();
 }
 
 // 이 배포(Web App)에 접속했을 때 보여줄 화면
@@ -112,6 +146,167 @@ function getSheetByGid_(ss, gid) {
   return null;
 }
 
+function findHeaderIndex_(headers, patterns) {
+  for (let i = 0; i < headers.length; i++) {
+    for (const p of patterns) { if (p.test(String(headers[i] || '').trim())) return i; }
+  }
+  return -1;
+}
+
+/**
+ * 최초 1회 실행용 — "양육시트 합본" 새 구글시트를 만들고 헤더를 세팅한다.
+ * SHEET1_LINK/SHEET2_LINK가 먼저 설정돼 있어야 한다(원본 열 구조를 그대로 가져오려고).
+ * 실행 후 로그에 뜨는 URL을 복사해서 스크립트 속성 MERGED_SHEET_LINK 에 등록하면 끝.
+ * 이미 합본 시트가 있으면(=MERGED_SHEET_LINK가 이미 설정돼 있으면) 실수로 새로 만들지 않도록 막는다.
+ */
+function setupMergedSheet() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('MERGED_SHEET_LINK')) {
+    Logger.log('⚠️ 이미 MERGED_SHEET_LINK가 설정돼 있습니다. 새로 만들려면 먼저 그 속성을 지우고 다시 실행하세요.');
+    return;
+  }
+  const link = props.getProperty('SHEET2_LINK') || props.getProperty('SHEET1_LINK');
+  if (!link) {
+    Logger.log('❌ SHEET1_LINK 또는 SHEET2_LINK가 먼저 설정돼 있어야 합니다.');
+    return;
+  }
+  const info = parseSheetLink_(link);
+  const srcSs = SpreadsheetApp.openById(info.id);
+  const srcSheet = info.gid ? (getSheetByGid_(srcSs, info.gid) || srcSs.getSheets()[0]) : srcSs.getSheets()[0];
+  const srcHeaders = srcSheet.getRange(1, 1, 1, srcSheet.getLastColumn()).getDisplayValues()[0]
+    .map(h => String(h || '').replace(/\r?\n/g, ' ').trim());
+
+  const newSs = SpreadsheetApp.create('유치부 양육시트 합본');
+  const sheet = newSs.getSheets()[0];
+  sheet.setName('합본');
+
+  // 합본 열 구성: 부서(구분용, 원본엔 없는 열) + 원본 열 그대로 + 제출계정/제출일시(누가 언제 올렸는지 기록)
+  const headers = ['부서'].concat(srcHeaders).concat(['제출계정', '제출일시']);
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sheet.setFrozenRows(1);
+
+  Logger.log('✅ 합본 시트를 만들었습니다: ' + newSs.getName());
+  Logger.log('아래 URL을 복사해서 스크립트 속성 MERGED_SHEET_LINK 에 등록하세요:');
+  Logger.log(newSs.getUrl());
+}
+
+/**
+ * 교사가 업로드한 반 파일을 처리하는 유일한 입구.
+ * payload = { base64, filename, dept("1"/"2"), className("우3" 등) }
+ * 원본 마스터 시트는 절대 쓰지 않는다 — 오직 합본 시트에만 쓴다.
+ */
+function uploadClassFile(payload) {
+  if (!isTeacher_()) {
+    throw new Error('업로드 권한이 없는 계정입니다(' + (getCurrentEmail_() || '알 수 없음') + '). 관리자에게 문의해주세요.');
+  }
+
+  const dept = String((payload && payload.dept) || '').trim();
+  const className = String((payload && payload.className) || '').trim();
+  const base64 = payload && payload.base64;
+  const filename = (payload && payload.filename) || 'upload.xlsx';
+
+  if (!dept || !className) throw new Error('부서/반 정보가 없습니다. 화면에서 부서와 반을 다시 선택해주세요.');
+  if (!base64) throw new Error('업로드할 파일이 없습니다.');
+
+  const mergedLink = PropertiesService.getScriptProperties().getProperty('MERGED_SHEET_LINK');
+  if (!mergedLink) throw new Error('합본 시트가 아직 준비되지 않았습니다. 관리자에게 문의해주세요.');
+
+  let tempFileId = null;
+  try {
+    const temp = convertXlsxToTempSheet_(base64, filename);
+    tempFileId = temp.fileId;
+
+    const values = temp.sheet.getDataRange().getDisplayValues();
+    if (values.length < 2) throw new Error('업로드하신 파일에 내용이 없습니다. ①번으로 파일을 새로 받아서 다시 시도해주세요.');
+
+    const headers = values[0].map(h => String(h || '').replace(/\r?\n/g, ' ').trim());
+    const rows = values.slice(1).filter(r => r.some(v => String(v || '').trim() !== ''));
+
+    const idxName = findHeaderIndex_(headers, [/^이름$/]);
+    const idxClass = findHeaderIndex_(headers, [/^반$/]);
+    if (idxClass < 0 || idxName < 0) {
+      throw new Error('업로드하신 파일 형식이 다릅니다("이름"/"반" 열을 찾지 못했습니다). ①번으로 파일을 새로 받아서 다시 시도해주세요.');
+    }
+
+    // 안전장치: 파일 안 "반" 값이 전부 화면에서 고른 반과 같은지 확인 — 다른 반 파일을 잘못 올리는 실수 방지
+    const wrongClass = rows.find(r => String(r[idxClass] || '').trim() !== className);
+    if (wrongClass) {
+      throw new Error(`업로드하신 파일의 반(${String(wrongClass[idxClass] || '').trim()})이 화면에서 선택하신 반(${className})과 다릅니다. 반을 다시 확인해주세요.`);
+    }
+
+    replaceClassBlock_(mergedLink, dept, className, headers, rows, getCurrentEmail_());
+    return { ok: true, count: rows.length };
+  } finally {
+    if (tempFileId) cleanupTempFile_(tempFileId);
+  }
+}
+
+/**
+ * xlsx(base64)를 임시로 구글시트로 변환해서 연다. Drive 고급 서비스(Drive API) 활성화 필요.
+ * ⚠ Advanced Drive Service 버전에 따라 문법이 다르다:
+ *    v2(기본, 대부분의 튜토리얼 기준): Drive.Files.insert(resource, blob, {convert:true})
+ *    v3로 추가했다면: Drive.Files.create({name:..., mimeType: MimeType.GOOGLE_SHEETS}, blob)
+ *    "Files.insert is not a function" 오류가 나면 v3용 코드로 바꿔야 한다는 뜻이다.
+ */
+function convertXlsxToTempSheet_(base64, filename) {
+  const bytes = Utilities.base64Decode(base64);
+  const blob = Utilities.newBlob(bytes, MimeType.MICROSOFT_EXCEL, filename);
+
+  let file;
+  try {
+    file = Drive.Files.insert(
+      { title: '_temp_upload_' + new Date().getTime(), mimeType: MimeType.GOOGLE_SHEETS },
+      blob,
+      { convert: true }
+    );
+  } catch (err) {
+    throw new Error('파일을 읽는 중 오류가 발생했습니다(엑셀 파일이 맞는지 확인해주세요): ' + err.message);
+  }
+  const ss = SpreadsheetApp.openById(file.id);
+  return { fileId: file.id, sheet: ss.getSheets()[0] };
+}
+
+// 변환용으로 만들었던 임시 구글시트 파일을 정리(휴지통 이동)한다. DriveApp은 버전 걱정 없이 항상 동작.
+function cleanupTempFile_(fileId) {
+  try { DriveApp.getFileById(fileId).setTrashed(true); } catch (e) { /* 실패해도 치명적이지 않음 */ }
+}
+
+/**
+ * 합본 시트에서 그 부서+반의 기존 행을 지우고, 업로드된 새 데이터로 통째로 교체한다.
+ * (같은 반을 여러 번 올려도 중복이 안 쌓이는 이유가 바로 이 "교체" 방식)
+ */
+function replaceClassBlock_(mergedLink, dept, className, headers, rows, uploaderEmail) {
+  const info = parseSheetLink_(mergedLink);
+  const ss = SpreadsheetApp.openById(info.id);
+  const sheet = info.gid ? (getSheetByGid_(ss, info.gid) || ss.getSheets()[0]) : ss.getSheets()[0];
+
+  const mergedHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+  const idxDept = mergedHeaders.indexOf('부서');
+  const idxClassInMerged = findHeaderIndex_(mergedHeaders, [/^반$/]);
+  if (idxDept < 0 || idxClassInMerged < 0) {
+    throw new Error('합본 시트 형식이 예상과 다릅니다("부서"/"반" 열을 확인하세요). 관리자에게 문의해주세요.');
+  }
+
+  // 1) 같은 부서+반인 기존 행 찾아서 지움 — 뒤에서부터 지워야 행 번호가 안 꼬인다
+  const lastRow = sheet.getLastRow();
+  if (lastRow >= 2) {
+    const existing = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getDisplayValues();
+    for (let i = existing.length - 1; i >= 0; i--) {
+      const r = existing[i];
+      if (String(r[idxDept] || '').trim() === (dept + '부') && String(r[idxClassInMerged] || '').trim() === className) {
+        sheet.deleteRow(2 + i);
+      }
+    }
+  }
+
+  // 2) 새 데이터 추가: 부서 + 업로드 파일 원본 열 그대로 + 제출계정/제출일시
+  const tz = Session.getScriptTimeZone() || 'Asia/Seoul';
+  const now = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd HH:mm');
+  const newRows = rows.map(r => [dept + '부'].concat(r).concat([uploaderEmail || '', now]));
+  const startRow = sheet.getLastRow() + 1;
+  sheet.getRange(startRow, 1, newRows.length, newRows[0].length).setValues(newRows);
+}
+
 /**
  * 배포 전 점검용 — Apps Script 편집기에서 이 함수를 선택해 "실행"해보면
  * 로그(보기 > 로그)에 스크립트 속성이 제대로 설정됐는지 + 실제로 시트를 열 수 있는지 확인할 수 있다.
@@ -139,5 +334,25 @@ function checkSetup() {
     Logger.log('⚠️ ALLOWED_EMAILS: 미설정 — 로그인한 모든 구글 계정이 접근 가능한 상태입니다. "정해진 사람만" 쓰게 하려면 등록하세요.');
   } else {
     Logger.log(`✅ ALLOWED_EMAILS: 설정됨 (${allowed.split(',').map(s => s.trim()).filter(Boolean).length}명) — ${allowed}`);
+  }
+
+  const teachers = props.getProperty('TEACHER_EMAILS');
+  if (!teachers || !teachers.trim()) {
+    Logger.log('⚠️ TEACHER_EMAILS: 미설정 — 조회 가능한 사람은 누구나 업로드도 가능한 상태입니다.');
+  } else {
+    Logger.log(`✅ TEACHER_EMAILS: 설정됨 (${teachers.split(',').map(s => s.trim()).filter(Boolean).length}명)`);
+  }
+
+  const merged = props.getProperty('MERGED_SHEET_LINK');
+  if (!merged) {
+    Logger.log('❌ MERGED_SHEET_LINK: 미설정 — setupMergedSheet()를 먼저 실행하세요. 업로드 기능이 동작하지 않습니다.');
+  } else {
+    try {
+      const info = parseSheetLink_(merged);
+      SpreadsheetApp.openById(info.id).getName();
+      Logger.log('✅ MERGED_SHEET_LINK: 설정됨, 시트 열기 성공');
+    } catch (err) {
+      Logger.log(`⚠️ MERGED_SHEET_LINK: 설정은 됐지만 시트를 열 수 없음 — ${err.message}`);
+    }
   }
 }

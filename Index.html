@@ -188,6 +188,30 @@
         • 🔒 이 화면은 원본 시트 주소를 전혀 알지 못합니다 — 조회는 서버(Apps Script) 안에서만 이뤄집니다.
       </div>
     </div>
+
+    <!-- 교사 계정으로 로그인했을 때만 보임(amITeacher() 확인 후 hide 해제) -->
+    <div class="card hide" id="teacherCard">
+      <h2>👩‍🏫 교사용: 반 업데이트 업로드</h2>
+      <div class="hint">
+        • 위에서 <b>엑셀(.xlsx) 다운로드</b>로 우리 반 파일을 받아서 뒷부분(특별사항 등)만 수정한 뒤, 여기서 다시 올려주세요.<br/>
+        • 이름·반·학년 같은 열은 잠겨있어 실수로 못 바꿉니다 — 수정 가능한 열만 편집됩니다.<br/>
+        • 같은 반을 다시 올리면 이전 내용을 덮어씁니다(중복 안 쌓임). 다른 반 파일을 올리면 자동으로 거부됩니다.
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <div>
+          <label>지금 업로드할 반</label>
+          <div id="uploadTargetLabel" style="font-size:13.5px; font-weight:800; color:#dbe5ff; padding:11px 12px; border-radius:14px; border:1px solid rgba(169,183,215,.22); background:rgba(4,8,18,.65);">-</div>
+        </div>
+        <div>
+          <label>수정한 파일 선택</label>
+          <input type="file" id="uploadFile" accept=".xlsx" />
+        </div>
+      </div>
+      <div style="margin-top:10px;">
+        <button class="primary" id="btnUpload" type="button" style="width:100%;">업로드</button>
+      </div>
+      <div class="status" id="uploadStatus"></div>
+    </div>
   </div>
 
   <div class="actionbar">
@@ -315,6 +339,7 @@
         fillSelect($("trackSel"), trackSorted, `전체 (${trackSorted.length}개 학년)`, keepTrack);
 
         updateClassOptions(table, idx, keepClass);
+        updateUploadTargetLabel();
 
         setStatus(`${dept}부 목록 로딩 완료: 학년 ${trackSorted.length}개, 총 ${table.rows.length}행`);
       }catch(e){
@@ -331,6 +356,26 @@
       const table = cache[dept];
       if(!table) return;
       updateClassOptions(table, colIdx(table), "__ALL__");
+      updateUploadTargetLabel();
+    }
+
+    // 교사용 업로드 카드는 위쪽 부서/반 선택을 그대로 재사용한다(따로 다시 고를 필요 없게)
+    function updateUploadTargetLabel(){
+      const label = $("uploadTargetLabel");
+      if(!label) return;
+      const dept = $("dept").value;
+      const classSel = $("classSel").value;
+      label.textContent = (classSel === "__ALL__")
+        ? `${dept}부 — 위에서 반을 선택해주세요`
+        : `${dept}부 ${classSel}`;
+    }
+
+    // 페이지 로드 시 서버에 "나 업로드 가능한 계정이야?" 물어보고, 맞으면 교사 카드를 보여준다.
+    async function initTeacherUI(){
+      try{
+        const isTeacher = await runServer("amITeacher");
+        if(isTeacher) $("teacherCard").classList.remove("hide");
+      }catch(e){ /* 실패해도 조회 기능엔 영향 없음 — 조용히 무시 */ }
     }
 
     // 이미지 저장은 인원이 너무 많으면 이미지가 지나치게 길어지고 브라우저가 느려지므로 상한을 둔다.
@@ -492,6 +537,10 @@
     // ExcelJS는 wrapText를 지원해 긴 텍스트 열은 셀 안에서 줄바꿈되도록 만들 수 있다.
     const LONG_TEXT_COL_RE = [/참고사항/, /특이사항/, /주소/];
 
+    // 교사 업로드 기능(2026-09-02)과 짝 — 식별 열은 실수로 못 건드리게 잠가서 내려준다.
+    // 완벽한 보안이 아니라 "실수 방지용"이고, 진짜 검증(반이 맞는지 등)은 서버(uploadClassFile)에서 다시 한다.
+    const IDENTITY_LOCK_RE = [/^no$/i, /^학년$/, /이름/, /^반$/, /성별/, /생년월일/, /주보호자/, /^주소$/, /^등록일$/, /^생일월$/, /출석빈도/];
+
     async function handleExcel(){
       try{
         const tsv = $("tsvBuffer").value;
@@ -524,6 +573,29 @@
           const col = ws.getColumn(i + 1);
           col.width = isLong ? 45 : Math.min(Math.max(String(h||"").length + 4, 10), 20);
           col.alignment = { vertical: "top", wrapText: isLong };
+
+          // 식별 열은 데이터 행(2행부터)까지 잠금 — 수정 가능한 열은 잠금 해제
+          const isIdentity = IDENTITY_LOCK_RE.some(re => re.test(h || ""));
+          for(let r = 2; r <= aoa.length; r++){
+            ws.getCell(r, i + 1).protection = { locked: isIdentity };
+          }
+        });
+
+        // 시트 보호 활성화(비밀번호 없음 — 실수 방지용이지 보안 목적 아님).
+        // 행/열 추가·삭제·정렬도 막아서 구조(행 수·순서)가 안 바뀌게 한다 —
+        // 새 친구 등록/학생 삭제는 이 업로드 기능이 아니라 관리자가 마스터 시트에서 처리.
+        await ws.protect("", {
+          selectLockedCells: true,
+          selectUnlockedCells: true,
+          formatCells: false,
+          formatColumns: false,
+          formatRows: false,
+          insertRows: false,
+          insertColumns: false,
+          deleteRows: false,
+          deleteColumns: false,
+          sort: false,
+          autoFilter: false
         });
 
         const buf = await wb.xlsx.writeBuffer();
@@ -585,14 +657,66 @@
       }
     }
 
+    function setUploadStatus(msg, isError=false){
+      const el = $("uploadStatus");
+      el.innerHTML = isError ? `⚠️ <b>${escapeHtml(msg)}</b>` : `✅ <b>${escapeHtml(msg)}</b>`;
+      el.style.color = isError ? "rgba(255,160,160,.95)" : "rgba(180,210,255,.95)";
+    }
+
+    // 파일 선택창에서 고른 .xlsx 파일을 서버로 보내기 위해 base64 문자열로 바꾼다.
+    function fileToBase64(file){
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = String(reader.result || "");
+          const commaIdx = result.indexOf(",");
+          resolve(commaIdx >= 0 ? result.slice(commaIdx + 1) : result); // "data:...;base64," 부분 떼어냄
+        };
+        reader.onerror = () => reject(new Error("파일을 읽는 중 오류가 발생했습니다."));
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function handleUpload(){
+      const dept = $("dept").value;
+      const classSel = $("classSel").value;
+      const fileInput = $("uploadFile");
+
+      if(classSel === "__ALL__"){
+        setUploadStatus("먼저 위에서 본인이 맡은 반을 선택해주세요(\"전체\" 상태로는 업로드할 수 없습니다).", true);
+        return;
+      }
+      const file = fileInput.files && fileInput.files[0];
+      if(!file){
+        setUploadStatus("업로드할 파일을 선택해주세요.", true);
+        return;
+      }
+
+      $("btnUpload").disabled = true;
+      setUploadStatus("업로드 중... (파일을 확인하고 있어요)");
+      try{
+        const base64 = await fileToBase64(file);
+        const result = await runServer("uploadClassFile", { base64, filename: file.name, dept, className: classSel });
+        setUploadStatus(`${dept}부 ${classSel} ${result.count}명 반영 완료!`);
+        fileInput.value = "";
+      }catch(e){
+        setUploadStatus(e.message || String(e), true);
+      }finally{
+        $("btnUpload").disabled = false;
+      }
+    }
+
     $("btnFetch").addEventListener("click", handleFetch);
     $("btnCopyText").addEventListener("click", handleCopyText);
     $("btnExcel").addEventListener("click", handleExcel);
     $("btnImage").addEventListener("click", handleImage);
+    $("btnUpload").addEventListener("click", handleUpload);
     $("dept").addEventListener("change", () => { refreshOptions(); });
     $("trackSel").addEventListener("change", () => { onTrackChange(); });
+    $("classSel").addEventListener("change", () => { updateUploadTargetLabel(); });
 
     refreshOptions();
+    initTeacherUI();
   </script>
 </body>
 </html>
