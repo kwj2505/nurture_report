@@ -282,22 +282,26 @@ function uploadClassFile(payload) {
 
 /**
  * xlsx(base64)를 임시로 구글시트로 변환해서 연다. Drive 고급 서비스(Drive API) 활성화 필요.
- * ⚠ Advanced Drive Service 버전에 따라 문법이 다르다:
- *    v2(기본, 대부분의 튜토리얼 기준): Drive.Files.insert(resource, blob, {convert:true})
- *    v3로 추가했다면: Drive.Files.create({name:..., mimeType: MimeType.GOOGLE_SHEETS}, blob)
- *    "Files.insert is not a function" 오류가 나면 v3용 코드로 바꿔야 한다는 뜻이다.
+ * ⚠ Advanced Drive Service는 프로젝트마다 v2/v3 중 하나로 추가되는데, 문법이 서로 다르다
+ *    (v2: Drive.Files.insert(자원, blob, {convert:true}) / v3: Drive.Files.create(자원, blob)).
+ *    어느 쪽이 추가됐는지 미리 알 수 없어서, 실행 시점에 `Drive.Files.create`가 있는지 보고
+ *    자동으로 맞는 방식을 골라 쓴다(2026-09-03: "Files.insert is not a function" 오류로
+ *    v3가 추가된 경우가 실제로 있었음을 확인해서 자동 판별로 변경).
  */
 function convertXlsxToTempSheet_(base64, filename) {
   const bytes = Utilities.base64Decode(base64);
   const blob = Utilities.newBlob(bytes, MimeType.MICROSOFT_EXCEL, filename);
+  const tempName = '_temp_upload_' + new Date().getTime();
 
   let file;
   try {
-    file = Drive.Files.insert(
-      { title: '_temp_upload_' + new Date().getTime(), mimeType: MimeType.GOOGLE_SHEETS },
-      blob,
-      { convert: true }
-    );
+    if (Drive.Files.create) {
+      // Drive API v3
+      file = Drive.Files.create({ name: tempName, mimeType: MimeType.GOOGLE_SHEETS }, blob);
+    } else {
+      // Drive API v2
+      file = Drive.Files.insert({ title: tempName, mimeType: MimeType.GOOGLE_SHEETS }, blob, { convert: true });
+    }
   } catch (err) {
     throw new Error('파일을 읽는 중 오류가 발생했습니다(엑셀 파일이 맞는지 확인해주세요): ' + err.message);
   }
